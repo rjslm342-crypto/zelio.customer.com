@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Customer Saver — Google Sheets Backend</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; max-width:900px; margin:30px auto; padding:0 16px; }
+    h1,h2 { color: #222; }
+    .card { border:1px solid #e0e0e0; padding:16px; border-radius:8px; margin-bottom:16px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+    input, textarea { width:100%; padding:10px; margin:8px 0; box-sizing:border-box; border-radius:6px; border:1px solid #ccc; }
+    button { padding:10px 16px; border-radius:6px; border:0; cursor:pointer; }
+    .row { display:flex; gap:10px; }
+    .small { width:150px; }
+    #list p { margin:8px 0; }
+    .muted { color:#666; font-size:0.9rem; }
+  </style>
+</head>
+<body>
+
+  <h1>Customer Saver (Google Sheets)</h1>
+
+  <div id="authCard" class="card">
+    <h2>Login</h2>
+    <div class="row">
+      <input id="phone" placeholder="Phone (e.g. 9999999999)">
+      <input id="password" placeholder="Password" type="password" class="small">
+    </div>
+    <div style="margin-top:8px">
+      <button id="btnLogin">Login</button>
+      <button id="btnLogout" style="display:none">Logout</button>
+    </div>
+    <div id="loginMsg" class="muted"></div>
+  </div>
+
+  <div id="formCard" class="card" style="display:none">
+    <h2>Save Customer</h2>
+    <input id="cname" placeholder="Customer name">
+    <input id="caddress" placeholder="Customer address">
+    <input id="cphone" placeholder="Customer phone">
+    <textarea id="cdesc" rows="3" placeholder="Description"></textarea>
+    <div style="display:flex; gap:8px">
+      <button id="btnSave">Save</button>
+      <button id="btnRefresh">Refresh List</button>
+    </div>
+    <div id="saveMsg" class="muted"></div>
+  </div>
+
+  <div id="listCard" class="card" style="display:none">
+    <h2>Your Customers</h2>
+    <div id="list" class="muted">No customers yet.</div>
+  </div>
+
+<script>
+/* ================== CONFIG ================== */
+/* Paste your Apps Script Web App URL here: */
+const API_URL = "https://script.google.com/macros/s/AKfycbxb2Tu3vIOmMYECiWJteKzJfgt9HSnddIY4PUtDfTGV3hovXTJSQyPxebEOaNDf3tDi/exec
+";
+/* ============================================ */
+
+let USER_ID = null;
+
+// Helper: POST JSON to Apps Script and parse JSON response
+async function apiPost(payload) {
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    // If the server returns non-JSON (error page), this will throw
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err };
+  }
+}
+
+/* ========== AUTH ========== */
+document.getElementById("btnLogin").addEventListener("click", async () => {
+  const phone = document.getElementById("phone").value.trim();
+  const password = document.getElementById("password").value;
+
+  if (!phone || !password) { document.getElementById("loginMsg").textContent = "Enter phone and password."; return; }
+
+  document.getElementById("loginMsg").textContent = "Logging in...";
+
+  const r = await apiPost({ action: "login", phone, password });
+  if (!r.ok) {
+    document.getElementById("loginMsg").textContent = "Network/API error: " + r.error;
+    return;
+  }
+
+  const data = r.data;
+  if (data.success) {
+    USER_ID = data.userId;
+    localStorage.setItem("cs_userId", USER_ID);
+    document.getElementById("loginMsg").textContent = "Login successful — userId: " + USER_ID;
+    showLoggedIn();
+    await loadCustomers();
+  } else {
+    document.getElementById("loginMsg").textContent = "Invalid phone or password.";
+  }
+});
+
+document.getElementById("btnLogout").addEventListener("click", () => {
+  USER_ID = null;
+  localStorage.removeItem("cs_userId");
+  document.getElementById("loginMsg").textContent = "Logged out.";
+  showLoggedOut();
+});
+
+function showLoggedIn() {
+  document.getElementById("formCard").style.display = "block";
+  document.getElementById("listCard").style.display = "block";
+  document.getElementById("btnLogin").style.display = "none";
+  document.getElementById("btnLogout").style.display = "inline-block";
+}
+
+function showLoggedOut() {
+  document.getElementById("formCard").style.display = "none";
+  document.getElementById("listCard").style.display = "none";
+  document.getElementById("btnLogin").style.display = "inline-block";
+  document.getElementById("btnLogout").style.display = "none";
+  document.getElementById("list").innerHTML = "No customers yet.";
+}
+
+/* ========== SAVE CUSTOMER ========== */
+document.getElementById("btnSave").addEventListener("click", async () => {
+  if (!USER_ID) return alert("Please login first.");
+
+  const name = document.getElementById("cname").value.trim();
+  const address = document.getElementById("caddress").value.trim();
+  const phone = document.getElementById("cphone").value.trim();
+  const description = document.getElementById("cdesc").value.trim();
+
+  if (!name || !phone) { document.getElementById("saveMsg").textContent = "Name and phone are required."; return; }
+
+  document.getElementById("saveMsg").textContent = "Saving...";
+
+  const r = await apiPost({
+    action: "saveCustomer",
+    userId: USER_ID,
+    name, address, phone, description
+  });
+
+  if (!r.ok) {
+    document.getElementById("saveMsg").textContent = "Save failed: " + r.error;
+    return;
+  }
+
+  document.getElementById("saveMsg").textContent = "Saved!";
+  // clear some inputs
+  document.getElementById("cname").value = "";
+  document.getElementById("cphone").value = "";
+  document.getElementById("caddress").value = "";
+  document.getElementById("cdesc").value = "";
+  await loadCustomers();
+});
+
+/* ========== LOAD CUSTOMERS ========== */
+document.getElementById("btnRefresh").addEventListener("click", loadCustomers);
+
+async function loadCustomers() {
+  if (!USER_ID) return;
+
+  document.getElementById("list").textContent = "Loading...";
+  const r = await apiPost({ action: "getCustomers", userId: USER_ID });
+
+  if (!r.ok) {
+    document.getElementById("list").textContent = "Failed to load: " + r.error;
+    return;
+  }
+
+  const list = r.data;
+  if (!Array.isArray(list) || list.length === 0) {
+    document.getElementById("list").innerHTML = "<div class='muted'>No customers saved yet.</div>";
+    return;
+  }
+
+  document.getElementById("list").innerHTML = list.map(item => {
+    return `<p><strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(item.phone)}<br>
+      ${escapeHtml(item.address)}<br><span class="muted">${escapeHtml(item.description)}</span></p><hr>`;
+  }).join("");
+}
+
+// small html escape to avoid accidental html injection
+function escapeHtml(s) {
+  if (!s) return "";
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+/* ========== STARTUP ========== */
+(function init() {
+  const saved = localStorage.getItem("cs_userId");
+  if (saved) {
+    USER_ID = saved;
+    document.getElementById("loginMsg").textContent = "Restored userId: " + USER_ID;
+    showLoggedIn();
+    loadCustomers();
+  }
+})();
+</script>
+</body>
+</html>
